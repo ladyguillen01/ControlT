@@ -1,0 +1,109 @@
+options compress=yes obs=max; /* Comprime tablas temporales y permite procesar todo */
+
+%let codmes = 202507;
+%let DBRICKS_MAX_TEXT = 128;
+%let usr = T04809;
+%let passw = Lima2025$$$;
+%let bd = BCPDW3;
+
+libname libdbtr odbc dsn="RBMSEG_SQLW" authdomain="DatabricksAuth" user=token dbmax_text=&DBRICKS_MAX_TEXT.;
+libname BCP "/sasdata01/RBM_SEG_DESA_01/giancarloHerrera/provisiones/data"; 
+libname bcp1 "/sasdata01/RBM_SEG_DESA_04/T56309/Data/SSFF";
+libname ods_v ORACLE user=&usr pass="&passw" path=BCPDW3 schema=ods_v;
+
+proc import datafile="/sasdata31/RBM_SEG_DESA_04/T65734/tercio/temp_grado_sos.csv"
+    out=work.temp_grado_sos01
+    dbms=csv
+    replace;
+    guessingrows=10000;
+    getnames=yes;
+run;
+
+proc sql;
+create table temp_grado_sos as 
+select distinct 
+    trim(codinternocomputacional) as codinternocomputacional,
+    trim(numsolicitudmic) as numsolicitudmic, 
+    trim(GRADO_SOSTENIBILIDAD) as GRADO_SOSTENIBILIDAD 
+from temp_grado_sos01;
+quit;
+
+proc sql;
+create table MiVivienda_Garantias_0 as
+select distinct  
+    a.CODCLAVEOPECTA,
+    a.codopecta,
+    a.CODCLAVECIC,
+    b.CODOPECTAGAR,
+    c.TIPESTGAR,
+    d.CODTIPPRESTAMO,
+    d.FECDESEMBOLSOORIGINAL,
+    input(compress(CODSOLICITUDPRESTAMO),10.) as CODSOLICITUDPRESTAMO_n,
+    compress(NUMSOLICITUD) as NUMSOLICITUD,
+    MTOBIENADQUIRIR,
+    case when substr(CODSOLICITUDPRESTAMO,1,2)='CC' then 1 else 0 end as FLG_CC
+from ods_v.hm_resumensaldo a /*prueba colocando el where acá guillen ._. */
+left join ods_v.md_relacionprestamogarantia b
+    on a.CODCLAVEOPECTA = b.CODCLAVEOPECTA and b.FLGREGELIMINADO = 'N'
+left join ods_v.md_garantia c
+    on b.CODOPECTAGAR = c.CODOPECTAGAR and c.FLGREGELIMINADO = 'N'
+left join ods_v.md_prestamo d
+    on a.CODCLAVEOPECTA = d.CODCLAVEOPECTA
+left join ods_v.md_solicitud_mic e
+    on input(compress(CODSOLICITUDPRESTAMO),10.) = e.CODSOLICITUD
+where a.codmes = &codmes.
+  and a.codproducto in ('CPEHMM','CPEHMR','CPEHMV','CPEHTP','CPTM01','CPEHTR','CPEHMP')
+  and d.CODTIPPRESTAMO in ('HBIV','HITP','HMIV','HSIV','HVIV','HTIV');
+quit;
+
+proc sql;
+create table MiVivienda_Garantias_01 as
+select a.*, b.GRADO_SOSTENIBILIDAD
+from MiVivienda_Garantias_0 a
+left join temp_grado_sos b
+    on compress(a.NUMSOLICITUD) = compress(b.numsolicitudmic)
+    and a.NUMSOLICITUD is not null;
+quit;
+
+proc sql;
+create table MiVivienda_Garantias_1 as
+select distinct
+    compress(b.CODINTERNOCOMPUTACIONAL) as CIC,
+    substr(b.CODDOC,5,8) as IDC,
+    b.TIPDOC as TIPO_IDC,
+    substr(compress(b.NBRCLI)||' '||compress(b.APEPATCLI)||' '||compress(b.APEMATCLI),1,40) as NOMBRES,
+    case 
+        when FLG_CC = 1 then 0.333333
+        when datepart(FECDESEMBOLSOORIGINAL) >= '01JAN2022'd then 
+            case 
+                when MTOBIENADQUIRIR <= 232200 then 
+                    case 
+                        when GRADO_SOSTENIBILIDAD = 'GRADO1' then 0.16670
+                        when GRADO_SOSTENIBILIDAD = 'GRADO2' then 0.26670
+                        when GRADO_SOSTENIBILIDAD = 'GRADO3' then 0.36670
+                        else 0.066700 
+                    end
+                when MTOBIENADQUIRIR > 232200 then 
+                    case 
+                        when GRADO_SOSTENIBILIDAD = 'GRADO1' then 0.066700
+                        when GRADO_SOSTENIBILIDAD = 'GRADO2' then 0.166700
+                        when GRADO_SOSTENIBILIDAD = 'GRADO3' then 0.266700
+                        else 0.000000 
+                    end
+                else 0.333333
+            end
+        else 0.333333
+    end as COBERTURA_ADICIONAL
+from MiVivienda_Garantias_01 a
+left join ods_v.md_clienteg94 b
+    on a.CODCLAVECIC = b.CODCLAVECIC and b.FLGREGELIMINADO = 'N'
+where TIPESTGAR = '10' and calculated COBERTURA_ADICIONAL > 0;
+quit;
+
+proc export data=MiVivienda_Garantias_1
+    outfile="/sasdata01/RBM_SEG_DESA_04/T65734/tercio/terciopremacroprueba.csv" 
+    dbms=dlm
+    replace;
+    delimiter=";";
+run;
+/*\\pfilep06\Seguimiento\Lady G\25. Tercio Mi vivienda*/

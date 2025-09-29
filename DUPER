@@ -1,0 +1,91 @@
+--TABLA MADRE MALLA
+Select SUM (SALDO_JO) from catalog_lhcl_prod_bcp.bcp_edv_rbm.rbmconsolidadomigradoconcodclavectaMALLA where codmes=202508 and PRODUCTO= 'TC' --limit 1  --6125289826.81
+
+--
+WITH calendario AS (
+    SELECT CODMES, CODMES_ANTERIOR
+    FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.PROYECCION_DIAS),
+    
+base AS (
+    SELECT a.*,
+        CASE WHEN b.codinternocomputacional IS NOT NULL THEN 1 ELSE 0 END AS flag_duper,
+        CASE WHEN a.montogarp = 0 THEN 0
+             WHEN a.montogarp IS NULL THEN 0
+             ELSE 1 END AS FLAG_GARANTIA,
+        CASE WHEN a.TRAMO_MORA = '0.<0>' then 1             WHEN a.TRAMO_MORA = '0.<1-8>' then 2
+            WHEN a.TRAMO_MORA = '1.<9-30>' then 3             WHEN a.TRAMO_MORA = '2.<31-60>' then 4
+            WHEN a.TRAMO_MORA = '3.<61-90>' then 5             WHEN a.TRAMO_MORA = '4.<91-120>' then 6
+            WHEN a.TRAMO_MORA = '5.<121-150>' then 7             WHEN a.TRAMO_MORA = '6.>=151' then 8
+            WHEN a.TRAMO_MORA = 'CANCELACION' then 9         END AS TRAMO_NUMERICO
+    FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.rbmconsolidadomigradoconcodclavectaMALLA a
+    LEFT JOIN catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_HST b
+      ON a.codinternocomputacional = b.codinternocomputacional
+     AND a.codmes = b.codmes)
+-- Select SUM (SALDO_JO) from base where codmes=202508 and PRODUCTO= 'TC'              --6125289826.81
+,
+
+base_con_calendario AS (
+    SELECT b.*, cal.CODMES_ANTERIOR
+    FROM base b
+    LEFT JOIN calendario cal ON b.codmes = cal.CODMES)
+
+--select SUM(SALDO_JO) from base_con_calendario where codmes=202508 and PRODUCTO= 'TC'     --6125289826.81
+    , 
+
+comparacion AS (
+    SELECT 
+        b2.codclavecta,
+        b2.codinternocomputacional,
+        b2.codmes,
+        b2.producto,
+        b1.TRAMO_MORA AS TRAMO_MORA_ANT,
+        b2.TRAMO_MORA AS TRAMO_MORA,
+        b1.saldo_jo AS SALDO_FINMES_ANT,
+        b2.saldo_jo AS SALDO_FINMES,
+        b1.tipclasifriesgofinal AS TIPCLASIFRIESGOFINAL_ANT,
+        b2.tipclasifriesgofinal AS TIPCLASIFRIESGOFINAL,
+        b2.flag_duper AS FLAG_DUPER,
+        b1.FLAG_GARANTIA AS FLAG_GARANTIA_ANT,
+        b2.FLAG_GARANTIA,
+        b1.GASTO_BASICO AS GASTO_BASICO_ANT,
+        b2.GASTO_BASICO,
+        b1.GTO_PROVISION_FINAL AS GTO_PROVISION_FINAL_ANT,
+        b2.GTO_PROVISION_FINAL,
+        b1.montogarp AS MONTOGARP_ANT,
+        b2.montogarp AS MONTOGARP,
+        b2.tipcredito AS TIPCREDITO,
+        b1.TRAMO_NUMERICO AS TRAMO_MORA_NUM_ANT,
+        b2.TRAMO_NUMERICO AS TRAMO_MORA_NUM,
+        CASE 
+            WHEN b2.TRAMO_NUMERICO IS NULL THEN '0.Cancelacion'
+            WHEN b1.TRAMO_NUMERICO = b2.TRAMO_NUMERICO THEN '1.Mantiene tramo' 
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = -1 THEN '2.Deteriora 1 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = -2 THEN '3.Deteriora 2 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO < -2 THEN '4.Deteriora >2 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = 1 THEN '5.Mejora 1 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = 2 THEN '6.Mejora 2 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO > 2 THEN '7.Mejora >2 tramo'
+            WHEN b1.TRAMO_NUMERICO IS NULL THEN '8.Apertura de venta' 
+        END AS TRAMO_CLASIF_RIESGO,
+        CASE WHEN b2.TRAMO_NUMERICO IS NULL THEN '0.Cancelacion'
+            WHEN b1.TRAMO_NUMERICO = b2.TRAMO_NUMERICO THEN '1.Mantiene tramo' 
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO <= -1 THEN '2.Deteriora tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO >= 1 THEN '3.Mejora tramo'
+            WHEN b1.TRAMO_NUMERICO IS NULL THEN '0.Apertura de venta' 
+        END AS CLASIF_RESUMEN,
+        CASE 
+            WHEN FLAG_GARANTIA_ANT = 0 AND b2.FLAG_GARANTIA = 1 THEN '1.Recupera garantia' 
+            WHEN FLAG_GARANTIA_ANT = 1 AND b2.FLAG_GARANTIA = 0 THEN '2.Perdida garantia'
+            WHEN FLAG_GARANTIA_ANT = 1 AND b2.FLAG_GARANTIA = 1 THEN '3.Mantiene garantia'
+            WHEN FLAG_GARANTIA_ANT = 0 AND b2.FLAG_GARANTIA = 1 THEN '4.Sin garantia anterior'
+            WHEN FLAG_GARANTIA_ANT = 0 AND b2.FLAG_GARANTIA = 0 THEN '5.Sin garantia anterior y sin garantia actual'
+            WHEN FLAG_GARANTIA_ANT IS NULL THEN '6. APERTURA DE VENTA'
+            ELSE 'OTRO' 
+        END AS CLASIF_GARANTIA
+    FROM base_con_calendario b2
+    LEFT JOIN base b1 
+      ON b2.codclavecta = b1.codclavecta
+     AND b2.producto = b1.producto
+     AND b1.codmes = b2.CODMES_ANTERIOR
+    WHERE b2.producto NOT IN ('RLEM', 'RPAM', 'BDN RESTO') )
+SELECT sum(SALDO_FINMES) from comparacion where codmes=202508 and PRODUCTO= 'TC';  --6520514792.14

@@ -42,3 +42,11 @@ base AS (
      AND a.codmes = c.CODMES)
 
 select*from base
+
+-------------------------
+inner join
+(
+select date_format(a.FECSALDO,'yyyyMM') AS CODMES,max(A.FECSALDO) as FECSALDO
+from catalog_lhcl_prod_bcp.bcp_udv_int_vU.h_saldocuentacreditopersonal a
+group by all
+) b on a.fecsaldo=b.fecsaldo

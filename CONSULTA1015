@@ -1,0 +1,183 @@
+WITH
+calendario AS (
+    SELECT CODMES, CODMES_ANTERIOR
+    FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.PROYECCION_DIAS),
+
+h_saldocuentacreditopersonal_Filtrada AS ( -- Particionada: fecrutina (prioridad más alta disponible)
+    SELECT
+        CODCLAVECTA,
+        FECSALDO,
+        TIPBLOQUEOCREDITOPERSONAL
+    FROM catalog_lhcl_prod_bcp.bcp_udv_int_vU.h_saldocuentacreditopersonal
+    WHERE fecrutina >= '2025-09-01' AND fecrutina <= '2025-10-13'),
+
+hsccp_MesCalculado AS ( -- Evita recalcular DATE_FORMAT en múltiples cláusulas
+    SELECT
+        CODCLAVECTA,
+        DATE_FORMAT(FECSALDO, 'yyyyMM') AS CODMES,
+        TIPBLOQUEOCREDITOPERSONAL,
+        FECSALDO
+    FROM h_saldocuentacreditopersonal_Filtrada),
+
+max_fechas AS (
+    SELECT
+        CODCLAVECTA,
+        CODMES,
+        TIPBLOQUEOCREDITOPERSONAL,
+        FECSALDO,
+        ROW_NUMBER() OVER (
+            PARTITION BY CODCLAVECTA, CODMES
+            ORDER BY FECSALDO DESC
+        ) AS rn
+    FROM hsccp_MesCalculado), 
+
+ultimos_registros AS (
+    SELECT
+        CODCLAVECTA,
+        CODMES,
+        TIPBLOQUEOCREDITOPERSONAL,
+        FECSALDO
+    FROM max_fechas
+    WHERE rn = 1
+),
+rbmconsolidado_Filtrado AS ( -- Pushdown del filtro de producto
+    SELECT
+        codclavecta,
+        codinternocomputacional,
+        codmes,
+        producto,
+        TRAMO_MORA,
+        saldo_jo,
+        tipclasifriesgofinal,
+        GASTO_BASICO,
+        GTO_PROVISION_FINAL,
+        montogarp,
+        tipcredito,
+        MORA
+    FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.rbmconsolidadomigradoconcodclavectaMALLA
+    WHERE producto NOT IN ('RLEM', 'RPAM', 'BDN RESTO')
+),
+
+base AS (
+    SELECT
+        a.codclavecta,
+        a.codinternocomputacional,
+        a.codmes,
+        a.producto,
+        a.TRAMO_MORA,
+        a.saldo_jo,
+        a.tipclasifriesgofinal,
+        CASE WHEN b.codinternocomputacional IS NOT NULL THEN 1 ELSE 0 END AS flag_duper,
+        CASE WHEN a.montogarp = 0 OR a.montogarp IS NULL THEN 0 ELSE 1 END AS FLAG_GARANTIA,
+        a.GASTO_BASICO,
+        a.GTO_PROVISION_FINAL,
+        a.montogarp,
+        a.tipcredito,
+        CASE
+            WHEN a.TRAMO_MORA = '0.<0>' THEN 1
+            WHEN a.TRAMO_MORA = '0.<1-8>' THEN 2
+            WHEN a.TRAMO_MORA = '1.<9-30>' THEN 3
+            WHEN a.TRAMO_MORA = '2.<31-60>' THEN 4
+            WHEN a.TRAMO_MORA = '3.<61-90>' THEN 5
+            WHEN a.TRAMO_MORA = '4.<91-120>' THEN 6
+            WHEN a.TRAMO_MORA = '5.<121-150>' THEN 7
+            WHEN a.TRAMO_MORA = '6.>=151' THEN 8
+            WHEN a.TRAMO_MORA = 'CANCELACION' THEN 'CANCELACION'
+        END AS TRAMO_NUMERICO,
+        a.MORA,
+        CASE
+            WHEN c.TIPBLOQUEOCREDITOPERSONAL IS NULL THEN '0.Sin bloqueo'
+            WHEN c.TIPBLOQUEOCREDITOPERSONAL = 'R' THEN '1.Refinanciado'
+            WHEN c.TIPBLOQUEOCREDITOPERSONAL = 'U' THEN '2.Prejudicial'
+            WHEN c.TIPBLOQUEOCREDITOPERSONAL = 'Y' THEN '3.Judicial'
+            WHEN c.TIPBLOQUEOCREDITOPERSONAL = 'E9CA' THEN '4.Castigos'
+            ELSE '5.Otro bloqueo'
+        END AS BLOQUEOCREDITO
+    FROM rbmconsolidado_Filtrado a
+    LEFT JOIN catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_HST b
+        ON a.codinternocomputacional = b.codinternocomputacional
+       AND a.codmes = b.codmes
+    LEFT JOIN ultimos_registros c
+        ON a.codclavecta = c.codclavecta
+       AND a.codmes = c.codmes),
+
+base_con_calendario AS (
+    SELECT
+        b.codclavecta, b.codinternocomputacional, b.codmes, b.producto, b.TRAMO_MORA, b.saldo_jo, b.tipclasifriesgofinal, b.flag_duper, b.FLAG_GARANTIA, b.GASTO_BASICO, b.GTO_PROVISION_FINAL, b.montogarp,
+        b.tipcredito, b.TRAMO_NUMERICO, b.MORA,  b.BLOQUEOCREDITO, cal.CODMES_ANTERIOR
+    FROM base b
+    LEFT JOIN calendario cal
+        ON b.codmes = cal.CODMES),
+
+comparacion AS (
+    SELECT 
+        b2.codclavecta,
+        b2.codinternocomputacional,
+        b2.codmes,
+        b2.producto,
+        b1.TRAMO_MORA AS TRAMO_MORA_ANT,
+        b2.TRAMO_MORA AS TRAMO_MORA,
+        b1.saldo_jo AS SALDO_FINMES_ANT,
+        b2.saldo_jo AS SALDO_FINMES,
+        b1.tipclasifriesgofinal AS TIPCLASIFRIESGOFINAL_ANT,
+        b2.tipclasifriesgofinal AS TIPCLASIFRIESGOFINAL,
+        b2.flag_duper AS FLAG_DUPER,
+        b1.FLAG_GARANTIA AS FLAG_GARANTIA_ANT,
+        b2.FLAG_GARANTIA,
+        b1.GASTO_BASICO AS GASTO_BASICO_ANT,
+        b2.GASTO_BASICO,
+        b1.GTO_PROVISION_FINAL AS GTO_PROVISION_FINAL_ANT,
+        b2.GTO_PROVISION_FINAL,
+        b1.montogarp AS MONTOGARP_ANT,
+        b2.montogarp AS MONTOGARP,
+        b2.tipcredito AS TIPCREDITO,
+   --   b1.TRAMO_NUMERICO AS TRAMO_MORA_NUM_ANT,
+   --   b2.TRAMO_NUMERICO AS TRAMO_MORA_NUM,
+        b1.MORA AS DIAS_MORA_ANT,
+        b2.MORA AS DIAS_MORA,
+        b1.BLOQUEOCREDITO AS BLOQUEOCREDITO_ANT,
+        b2.BLOQUEOCREDITO,
+        CASE 
+            WHEN b2.TRAMO_NUMERICO = 'CANCELACION' THEN '0.Cancelacion'
+            WHEN b1.TRAMO_NUMERICO = b2.TRAMO_NUMERICO THEN '1.Mantiene tramo' 
+            WHEN b1.TRAMO_NUMERICO = 'CANCELACION' THEN '1.Mantiene tramo' 
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = -1 THEN '2.Deteriora 1 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = -2 THEN '3.Deteriora 2 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO < -2 THEN '4.Deteriora >2 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = 1 THEN '5.Mejora 1 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO = 2 THEN '6.Mejora 2 tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO > 2 THEN '7.Mejora >2 tramo'
+            WHEN b1.TRAMO_NUMERICO IS NULL THEN '8.Venta' 
+        END AS TRAMO_CLASIF_RIESGO,
+        CASE 
+            WHEN b2.TRAMO_NUMERICO = 'CANCELACION' THEN '4.Cancelacion'
+            WHEN b1.TRAMO_NUMERICO = b2.TRAMO_NUMERICO THEN '1.Mantiene tramo' 
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO <= -1 THEN '2.Deteriora tramo'
+            WHEN b1.TRAMO_NUMERICO - b2.TRAMO_NUMERICO >= 1 THEN '3.Mejora tramo'
+            when b1.TRAMO_NUMERICO = 'CANCELACION' THEN '1.Mantiene tramo' 
+            WHEN b1.TRAMO_NUMERICO IS NULL THEN '0.Venta' 
+        END AS CLASIF_RESUMEN,
+        CASE 
+            WHEN FLAG_GARANTIA_ANT = 0 AND b2.FLAG_GARANTIA = 1 THEN '1.Recupera garantia' 
+            WHEN FLAG_GARANTIA_ANT = 1 AND b2.FLAG_GARANTIA = 0 THEN '2.Perdida garantia'
+            WHEN FLAG_GARANTIA_ANT = 1 AND b2.FLAG_GARANTIA = 1 THEN '3.Mantiene garantia'
+            WHEN FLAG_GARANTIA_ANT = 0 AND b2.FLAG_GARANTIA = 1 THEN '4.Sin garantia anterior'
+            WHEN FLAG_GARANTIA_ANT = 0 AND b2.FLAG_GARANTIA = 0 THEN '5.Sin garantia anterior y sin garantia actual'
+            WHEN FLAG_GARANTIA_ANT IS NULL THEN '6. Venta'
+            ELSE 'OTRO' 
+        END AS CLASIF_GARANTIA,
+        CASE 
+            WHEN DIAS_MORA_ANT = 0 AND DIAS_MORA = 31 THEN 1
+            WHEN DIAS_MORA_ANT = 30 AND DIAS_MORA = 91 THEN 1
+            WHEN DIAS_MORA_ANT = 90 AND DIAS_MORA = 121 THEN 1
+            ELSE 0
+        END AS DOBLE_SALTO
+    FROM base_con_calendario b2
+    LEFT JOIN base b1 
+      ON b2.codclavecta = b1.codclavecta
+     AND b2.producto = b1.producto
+     AND b1.codmes = b2.CODMES_ANTERIOR
+)
+SELECT
+    codclavecta, codinternocomputacional, codmes, producto, TRAMO_MORA_ANT, TRAMO_MORA, SALDO_FINMES_ANT, SALDO_FINMES, TIPCLASIFRIESGOFINAL_ANT, TIPCLASIFRIESGOFINAL, FLAG_DUPER, FLAG_GARANTIA_ANT, FLAG_GARANTIA, GASTO_BASICO_ANT, GASTO_BASICO, GTO_PROVISION_FINAL_ANT, GTO_PROVISION_FINAL, MONTOGARP_ANT, MONTOGARP, TIPCREDITO, DIAS_MORA_ANT, DIAS_MORA, BLOQUEOCREDITO_ANT, BLOQUEOCREDITO, TRAMO_CLASIF_RIESGO, CLASIF_RESUMEN, CLASIF_GARANTIA, DOBLE_SALTO
+FROM comparacion;

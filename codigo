@@ -1,0 +1,51 @@
+library(dplyr)
+library(tidyr)
+library(factoextra)
+
+# Ejemplo: df es tu dataframe con las columnas Mes, Provision, Maduración
+
+# Paso 1: Convertir a formato wide para que cada fila sea un Mes (origen del crédito) y columnas sean meses de maduración
+df_wide <- df %>%
+  mutate(Mes = as.character(Mes)) %>%  # asegurarse que Mes sea carácter para agrupar bien
+  pivot_wider(names_from = Maduración, values_from = Provision) 
+
+# Opcional: Reemplazar NA por 0 si hay meses de maduración sin provisión registrada
+df_wide[is.na(df_wide)] <- 0
+
+# Visualizar la tabla resultante
+head(df_wide)
+
+# Paso 2: Preparar matriz para k-means (sin la columna Mes)
+mat_prov <- as.matrix(df_wide[, -1])
+
+# Escalar la matriz (opcional, pero recomendado para kmeans)
+mat_prov_scaled <- scale(mat_prov)
+
+# Paso 3: Ejecutar k-means, elige k (por ejemplo 3)
+set.seed(2025)
+k <- 3
+km_res <- kmeans(mat_prov_scaled, centers = k, nstart = 25)
+
+# Paso 4: Agregar el cluster al dataframe original para análisis
+df_wide$cluster <- factor(km_res$cluster)
+
+# Paso 5: Visualización básica de los clusters (curvas promedio)
+library(ggplot2)
+library(reshape2)
+
+# Transformar para graficar
+df_long <- df_wide %>%
+  pivot_longer(cols = -c(Mes, cluster), names_to = "Maduración", values_to = "Provision") %>%
+  mutate(Maduración = as.numeric(Maduración))
+
+# Graficar la curva promedio de provisión por cluster
+ggplot(df_long, aes(x = Maduración, y = Provision, group = Mes, color = cluster)) +
+  geom_line(alpha = 0.3) +  # curvas individuales transparentes
+  stat_summary(aes(group = cluster), fun = mean, geom = "line", size = 1.5) + # curva promedio por cluster
+  labs(title = "Curvas de provisión agrupadas por clusters",
+       x = "Mes de maduración",
+       y = "Provision") +
+  theme_minimal()
+
+
+te doy más contexto de mi data. tengo registro de los meses en los que vendo un credito y tengo registro de cuánto provsiono cada mes por cada uno de los créditos.. En el mes en el cual se origina el crédito poro ejemplo 202402, (mes 0) se registra cuánto se vende... y en el proximo mes (mes1) se provisiona a veces 1% o dependiendo de cómo se va comportando esa prestamo... Mes Provision Maduración 01/02/2024 5652592,917 0 01/02/2024 -639920,9527 1 01/02/2024 -30729,1863 2 01/02/2024 1031391,041 3 01/02/2024 1529823,548 4 01/02/2024 1651911,433 5 01/02/2024 1944260,603 6 01/02/2024 1224105,892 7 01/02/2024 1540651,691 8 01/02/2024 753814,6801 9 01/02/2024 1157793,468 10 01/02/2024 1091678,169 11 01/02/2024 702913,5955 12 01/02/2024 887589,151 13 01/02/2024 690841,8321 14 01/02/2024 537090,8872 15 01/02/2024 624533,0932 16 01/02/2024 693134,1235 17 01/02/2024 1014293,372 18 01/02/2024 539222,6454 19 01/03/2024 5371585,191 0 01/03/2024 -654350,1692 1 01/03/2024 163727,9465 2 01/03/2024 1040557,486 3 Lo que quiero hacer es un kmeans entre estas curva para ver cuáles tienen cierto comportamiento y así identificar cuales son las que provisionan más, así identifico asi he dado prestamos a personas riesgosas ese mes. Me comentas si se entiende... Dame el codigo en Rstudio

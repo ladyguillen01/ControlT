@@ -1,67 +1,43 @@
 WITH ponderado AS (
   SELECT 
     CODMES_COSECHA,
-    SUM(MTODEUDA) AS sum_mtodeuda,
-    SUM(mtogastoprovsol) AS sum_mtogastoprovsol,
-    SUM(numpdcalibrado * MTODEUDA) / SUM(MTODEUDA) AS pdponderado
+    dessubsegmentobcarbmper AS segmento,
+    SUM(MTODEUDA) AS sum_mtodeuda_segmento,
+    SUM(mtogastoprovsol) AS sum_mtogastoprovsol_segmento,
+    SUM(numpdcalibrado * MTODEUDA) / SUM(MTODEUDA) AS pdponderado_segmento
   FROM calculadorabase
   WHERE 
     CODMES_COSECHA >= 202401 
     AND CTDMESMADURACION = 0  
-  GROUP BY CODMES_COSECHA
+  GROUP BY CODMES_COSECHA, dessubsegmentobcarbmper
 ),
 
-base AS (
-  SELECT 
-    a.CODMES_COSECHA, 
-    a.CTDMESMADURACION,
-    a.dessubsegmentobcarbmper AS segmento,
-    SUM(a.MTODEUDA) AS sum_mtodeuda,
-    SUM(a.mtogastoprovsol) AS sum_mtogastoprovsol,
-    b.pdponderado,
-    CASE 
-      WHEN b.pdponderado >= 0.102 THEN '1. Muy Alto'
-      WHEN b.pdponderado >= 0.074 THEN '2. Alto'
-      WHEN b.pdponderado >= 0.049 THEN '3. Medio II'
-      WHEN b.pdponderado >= 0.023 THEN '4. Medio I'
-      WHEN b.pdponderado >= 0.014 THEN '5. Bajo II'
-      WHEN b.pdponderado >= 0.006 THEN '6. Bajo I'
-      WHEN b.pdponderado >= 0 THEN '7. Muy Bajo'
-      ELSE '8. Sin PD'
-    END AS rango_pd
-  FROM calculadorabase a
-  LEFT JOIN ponderado b 
-    ON a.CODMES_COSECHA = b.CODMES_COSECHA
-  WHERE a.CODMES_COSECHA >= 202401
-  GROUP BY 
-    a.CODMES_COSECHA, 
-    a.CTDMESMADURACION,
-    a.dessubsegmentobcarbmper,
-    b.pdponderado
+totales AS (
+  SELECT
+    CODMES_COSECHA,
+    SUM(sum_mtodeuda_segmento) AS total_mtodeuda
+  FROM ponderado
+  GROUP BY CODMES_COSECHA
 )
 
 SELECT
-  CODMES_COSECHA,
-  CTDMESMADURACION,
-  pdponderado,
-  rango_pd,
+  p.CODMES_COSECHA,
 
-  -- Total deuda por grupo
-  SUM(sum_mtodeuda) AS total_mtodeuda,
+  -- porcentaje que representa cada segmento en la deuda inicial
+  SUM(CASE WHEN p.segmento = 'BEex' THEN p.sum_mtodeuda_segmento ELSE 0 END) / t.total_mtodeuda * 100 AS pct_BEex,
+  SUM(CASE WHEN p.segmento = 'Enalta' THEN p.sum_mtodeuda_segmento ELSE 0 END) / t.total_mtodeuda * 100 AS pct_Enalta,
+  SUM(CASE WHEN p.segmento = 'Bmedia' THEN p.sum_mtodeuda_segmento ELSE 0 END) / t.total_mtodeuda * 100 AS pct_Bmedia,
+  SUM(CASE WHEN p.segmento = 'Baja' THEN p.sum_mtodeuda_segmento ELSE 0 END) / t.total_mtodeuda * 100 AS pct_Baja,
+  SUM(CASE WHEN p.segmento = 'Consumo B' THEN p.sum_mtodeuda_segmento ELSE 0 END) / t.total_mtodeuda * 100 AS pct_ConsumoB,
 
-  -- Porcentajes por tipo de segmento
-  SUM(CASE WHEN segmento = 'BEex' THEN sum_mtodeuda ELSE 0 END) / SUM(sum_mtodeuda) * 100 AS pct_BEex,
-  SUM(CASE WHEN segmento = 'Enalta' THEN sum_mtodeuda ELSE 0 END) / SUM(sum_mtodeuda) * 100 AS pct_Enalta,
-  SUM(CASE WHEN segmento = 'Bmedia' THEN sum_mtodeuda ELSE 0 END) / SUM(sum_mtodeuda) * 100 AS pct_Bmedia,
-  SUM(CASE WHEN segmento = 'Baja' THEN sum_mtodeuda ELSE 0 END) / SUM(sum_mtodeuda) * 100 AS pct_Baja,
-  SUM(CASE WHEN segmento = 'Consumo B' THEN sum_mtodeuda ELSE 0 END) / SUM(sum_mtodeuda) * 100 AS pct_ConsumoB
+  -- pd ponderado total de la cosecha
+  SUM(p.sum_mtodeuda_segmento * p.pdponderado_segmento) / SUM(p.sum_mtodeuda_segmento) AS pdponderado_total
 
-FROM base
+FROM ponderado p
+JOIN totales t 
+  ON p.CODMES_COSECHA = t.CODMES_COSECHA
 GROUP BY 
-  CODMES_COSECHA,
-  CTDMESMADURACION,
-  pdponderado,
-  rango_pd
+  p.CODMES_COSECHA, 
+  t.total_mtodeuda
 ORDER BY 
-  CODMES_COSECHA ASC,
-  CTDMESMADURACION ASC;
+  p.CODMES_COSECHA ASC;

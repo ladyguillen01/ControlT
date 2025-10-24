@@ -11,55 +11,49 @@ WITH base AS (
   GROUP BY CODMES_COSECHA, dessubsegmentobcarbmper, CTDMESMADURACION
 ),
 
-totales AS (
+-- pesos de los segmentos calculados solo para maduración 0
+pesos AS (
   SELECT
     COSECHA,
-    SUM(CASE WHEN maduracion = 0 THEN saldo ELSE 0 END) AS total_mto_cosecha
+    dessubsegmentobcarbmper AS segmento,
+    SUM(saldo) / SUM(SUM(saldo)) OVER (PARTITION BY COSECHA) AS peso_segmento
   FROM base
-  GROUP BY COSECHA
+  WHERE maduracion = 0
+  GROUP BY COSECHA, dessubsegmentobcarbmper
 ),
 
-base_con_peso AS (
-  SELECT
-    b.*,
-    CASE 
-      WHEN b.maduracion = 0 THEN ROUND(b.saldo / t.total_mto_cosecha, 6)
-      ELSE NULL
-    END AS peso_segmento,
+final AS (
+  SELECT 
+    b.COSECHA,
+    b.maduracion,
+    SUM(b.saldo) AS saldo,
+    SUM(b.provision) AS provision,
+    MAX(b.pdponderado) AS pdponderado,
     CASE
-      WHEN b.pdponderado >= 0.08 THEN 'Muy alto'
-      WHEN b.pdponderado >= 0.05 THEN 'Alto'
-      WHEN b.pdponderado >= 0.02 THEN 'Medio'
-      WHEN b.pdponderado >  0   THEN 'Bajo'
+      WHEN MAX(b.pdponderado) >= 0.08 THEN 'Muy alto'
+      WHEN MAX(b.pdponderado) >= 0.05 THEN 'Alto'
+      WHEN MAX(b.pdponderado) >= 0.02 THEN 'Medio'
+      WHEN MAX(b.pdponderado) >  0   THEN 'Bajo'
       ELSE 'Sin riesgo'
-    END AS rango_pd
+    END AS rango_pd,
+
+    -- pivot dinámico de los segmentos
+    SUM(CASE WHEN p.segmento = '01. Enalta/Privada' THEN p.peso_segmento ELSE 0 END) AS "Enalta/Privada",
+    SUM(CASE WHEN p.segmento = '02. Bex' THEN p.peso_segmento ELSE 0 END) AS "Bex",
+    SUM(CASE WHEN p.segmento = '03. Consumo A' THEN p.peso_segmento ELSE 0 END) AS "Consumo A",
+    SUM(CASE WHEN p.segmento = '04. Consumo B' THEN p.peso_segmento ELSE 0 END) AS "Consumo B",
+    SUM(CASE WHEN p.segmento = '05. Consumo C' THEN p.peso_segmento ELSE 0 END) AS "Consumo C",
+    SUM(CASE WHEN p.segmento = '06. Consumo Otros' THEN p.peso_segmento ELSE 0 END) AS "Consumo Otros",
+    SUM(CASE WHEN p.segmento = '07. Pyme' THEN p.peso_segmento ELSE 0 END) AS "Pyme",
+    SUM(CASE WHEN p.segmento = '08. No Banco' THEN p.peso_segmento ELSE 0 END) AS "No Banco",
+    SUM(CASE WHEN p.segmento = '09. Gremio' THEN p.peso_segmento ELSE 0 END) AS "Gremio",
+    SUM(CASE WHEN p.segmento = '98. Otros' THEN p.peso_segmento ELSE 0 END) AS "Otros",
+    SUM(CASE WHEN p.segmento = '99. Missing' THEN p.peso_segmento ELSE 0 END) AS "Missing"
+
   FROM base b
-  LEFT JOIN totales t 
-    ON b.COSECHA = t.COSECHA
+  LEFT JOIN pesos p ON b.COSECHA = p.COSECHA
+  GROUP BY b.COSECHA, b.maduracion
 )
 
--- Pivot final: cada segmento es una columna
-SELECT 
-  COSECHA,
-  maduracion,
-  SUM(saldo) AS saldo,
-  SUM(provision) AS provision,
-  AVG(pdponderado) AS pdponderado,
-  AVG(peso_segmento) AS peso_segmento,
-  MAX(rango_pd) AS rango_pd,
-
-  SUM(CASE WHEN segmento = '01. Enalta/Privada' THEN peso_segmento ELSE 0 END) AS "Enalta/Privada",
-  SUM(CASE WHEN segmento = '02. Bex' THEN peso_segmento ELSE 0 END) AS "Bex",
-  SUM(CASE WHEN segmento = '03. Consumo A' THEN peso_segmento ELSE 0 END) AS "Consumo A",
-  SUM(CASE WHEN segmento = '04. Consumo B' THEN peso_segmento ELSE 0 END) AS "Consumo B",
-  SUM(CASE WHEN segmento = '05. Consumo C' THEN peso_segmento ELSE 0 END) AS "Consumo C",
-  SUM(CASE WHEN segmento = '06. Consumo Otros' THEN peso_segmento ELSE 0 END) AS "Consumo Otros",
-  SUM(CASE WHEN segmento = '07. Pyme' THEN peso_segmento ELSE 0 END) AS "Pyme",
-  SUM(CASE WHEN segmento = '08. No Banco' THEN peso_segmento ELSE 0 END) AS "No Banco",
-  SUM(CASE WHEN segmento = '09. Gremio' THEN peso_segmento ELSE 0 END) AS "Gremio",
-  SUM(CASE WHEN segmento = '98. Otros' THEN peso_segmento ELSE 0 END) AS "Otros",
-  SUM(CASE WHEN segmento = '99. Missing' THEN peso_segmento ELSE 0 END) AS "Missing"
-
-FROM base_con_peso
-GROUP BY COSECHA, maduracion
+SELECT * FROM final
 ORDER BY COSECHA, maduracion;

@@ -1,0 +1,42 @@
+##Pero cuando lo calculo uno por uno, la corralción es alta ._.
+# Simulación de datos (reemplaza con tu DataFrame real)
+maduraciones = [202410, 202409, 202408, 202403, 202402, 202401]
+np.random.seed(0)
+datafiltrada = pd.DataFrame({
+    'cosecha': np.random.choice(maduraciones, 100),
+    'maduracion': np.random.randint(1, 32, 100),
+    'provisionporc': np.random.rand(100) / 10,
+    'pdponderado': np.random.rand(100) / 10
+})
+
+# Inicializar listas para acumulación global
+real_global = []
+pred_global = []
+
+for maduracion in maduraciones:
+    data = datafiltrada[datafiltrada['cosecha'] == maduracion][['maduracion', 'provisionporc']].sort_values(by='maduracion')
+    data['provisioncumsum'] = data['provisionporc'].cumsum()
+
+    if len(data) >= 3:
+        coef = np.polyfit(data['maduracion'].astype(float), data['provisioncumsum'].astype(float), 2)
+        polinomio = np.poly1d(coef)
+        prediccion = polinomio(data['maduracion'].astype(float))
+
+        # Agregar valores a listas globales
+        real_global.extend(data['provisioncumsum'].tolist())
+        pred_global.extend(prediccion.tolist())
+
+# Crear índice común
+indice = range(len(real_global))
+
+# Graficar comparación total
+plt.figure(figsize=(12, 6))
+plt.plot(indice, real_global, label='Provisión acumulada total real', marker='o')
+plt.plot(indice, pred_global, label='Provisión acumulada total predicha', linestyle='--', marker='x')
+plt.title("Comparación de provisión acumulada total vs predicha")
+plt.xlabel("Índice acumulado")
+plt.ylabel("Provisión acumulada")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()

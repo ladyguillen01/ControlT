@@ -1,59 +1,50 @@
-WITH base AS (
-  SELECT
-    CODMES_COSECHA AS COSECHA,
-    dessubsegmentobcarbmper AS segmento,
-    CTDMESMADURACION AS maduracion,
-    SUM(MTODEUDA) AS saldo,
-    SUM(MTOGASTOPROVSOL) AS provision,
-    SUM(NUMPDCALIBRADO * MTODEUDA) / SUM(MTODEUDA) AS pdponderado
-  FROM calculadorabase
-  WHERE CODMES_COSECHA >= 202401
-  GROUP BY CODMES_COSECHA, dessubsegmentobcarbmper, CTDMESMADURACION
-),
+#1. cargo mi data
+data2=spark.sql(f"""select*from catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada""").toPandas()
+#2. filtro las columnas y filas con las que voy a trabajar
+datafiltrada = data2[(data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202311, 202310, 202308, 202309, 202307, 202305, 202302, 202303, 202304]))][['cosecha', 'maduracion', 'provisionporc', 'pdponderado']]
+#3. calcule las fórmulas que siguen las maduraciones para cada codmes: y_i=a*(codmes)^2 +b*codmes + c ;i=cosecha   y obtener una relación cdmes provisionporcacum
+#donde la provisionporcacum es el Acumulado de xcada cosecha ordenado por maduración 
 
--- pesos de los segmentos calculados solo para maduración 0
-pesos AS (
-  SELECT
-    COSECHA,
-    dessubsegmentobcarbmper AS segmento,
-    SUM(saldo) / SUM(SUM(saldo)) OVER (PARTITION BY COSECHA) AS peso_segmento
-  FROM base
-  WHERE maduracion = 0
-  GROUP BY COSECHA, dessubsegmentobcarbmper
-),
+maduraciones = [202410, 202409, 202408, 202403, 202402, 202401, 202311, 202310, 202308, 202309, 202307, 202305, 202302, 202303, 202304]
+for maduracion in maduraciones:
+    data = datafiltrada[(datafiltrada['cosecha'].isin([maduracion]))][['cosecha', 'maduracion', 'provisionporc', 'pdponderado']].sort_values(by='maduracion')
+    data['provisioncumsum'] = data['provisionporc'].cumsum()
+    grado = 2
+    coef = np.polyfit(data['maduracion'].to_numpy().astype(float), data['provisioncumsum'].to_numpy().astype(float), grado)  # coeficientes del polinomio
+    polinomio = np.poly1d(coef)     # función polinómica
+    # Predicciones
+    prediccion = polinomio(data['maduracion'].to_numpy().astype(float))
+    # Calcular R²
+    from sklearn.metrics import r2_score
+    r2 = r2_score(data['provisioncumsum'].to_numpy().astype(float), prediccion)
+    print(f"Maduración: {maduracion}")
+    print(f"Coeficientes del polinomio: {coef}")
+    print(f"R²: {r2:.4f}")
+    print()
+#4. En base a las formulas polinómicas calculé otra formula polinómica para relacionar cada factor de mis primeros modelos para las cosechas con las pdponderado
 
-final AS (
-  SELECT 
-    b.COSECHA,
-    b.maduracion,
-    SUM(b.saldo) AS saldo,
-    SUM(b.provision) AS provision,
-    MAX(b.pdponderado) AS pdponderado,
-    CASE
-      WHEN MAX(b.pdponderado) >= 0.08 THEN 'Muy alto'
-      WHEN MAX(b.pdponderado) >= 0.05 THEN 'Alto'
-      WHEN MAX(b.pdponderado) >= 0.02 THEN 'Medio'
-      WHEN MAX(b.pdponderado) >  0   THEN 'Bajo'
-      ELSE 'Sin riesgo'
-    END AS rango_pd,
+#5- convertí los datos a decimal
+#import pandas as pd
+#from sklearn.metrics import r2_score
+data['maduracion']=data['maduracion'].astype(float)
+data['provisionporc']=data['provisionporc'].astype(float)
+data['pdponderado']=data['pdponderado'].astype(float)
+data['provisioncumsum']=data['provisioncumsum'].astype(float)
+data.dtypes
 
-    -- pivot dinámico de los segmentos
-    SUM(CASE WHEN p.segmento = '01. Enalta/Privada' THEN p.peso_segmento ELSE 0 END) AS "Enalta/Privada",
-    SUM(CASE WHEN p.segmento = '02. Bex' THEN p.peso_segmento ELSE 0 END) AS "Bex",
-    SUM(CASE WHEN p.segmento = '03. Consumo A' THEN p.peso_segmento ELSE 0 END) AS "Consumo A",
-    SUM(CASE WHEN p.segmento = '04. Consumo B' THEN p.peso_segmento ELSE 0 END) AS "Consumo B",
-    SUM(CASE WHEN p.segmento = '05. Consumo C' THEN p.peso_segmento ELSE 0 END) AS "Consumo C",
-    SUM(CASE WHEN p.segmento = '06. Consumo Otros' THEN p.peso_segmento ELSE 0 END) AS "Consumo Otros",
-    SUM(CASE WHEN p.segmento = '07. Pyme' THEN p.peso_segmento ELSE 0 END) AS "Pyme",
-    SUM(CASE WHEN p.segmento = '08. No Banco' THEN p.peso_segmento ELSE 0 END) AS "No Banco",
-    SUM(CASE WHEN p.segmento = '09. Gremio' THEN p.peso_segmento ELSE 0 END) AS "Gremio",
-    SUM(CASE WHEN p.segmento = '98. Otros' THEN p.peso_segmento ELSE 0 END) AS "Otros",
-    SUM(CASE WHEN p.segmento = '99. Missing' THEN p.peso_segmento ELSE 0 END) AS "Missing"
-
-  FROM base b
-  LEFT JOIN pesos p ON b.COSECHA = p.COSECHA
-  GROUP BY b.COSECHA, b.maduracion
+#6. # Aplicar la fórmula
+data['proyectado'] = (
+    (0.06340894 * data['provisioncumsum']**2 - 0.00978566 * data['provisioncumsum'] + 0.00026513) * data['maduracion']**2 +
+    (0.854266795 * data['provisioncumsum']**2 + 0.0313562571 * data['provisioncumsum'] - 0.000346035382) * data['maduracion'] +
+    (2.56530353 * data['provisioncumsum']**2 - 0.31603608 * data['provisioncumsum'] + 0.01435779)
 )
 
-SELECT * FROM final
-ORDER BY COSECHA, maduracion;
+# Calcular R² y correlación
+r2 = r2_score(data['pdponderado'], data['proyectado'])
+correlacion = data['proyectado'].corr(data['pdponderado'])
+
+print(data)
+print(f"\nR²: {r2}")
+print(f"Correlación: {correlacion}")
+
+##pero la correlación me sale muy bajita u cuadndo corroboro con algunos emeses, la info de estas es errónea

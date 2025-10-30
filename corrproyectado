@@ -104,7 +104,21 @@ resumen = pd.DataFrame({
  
 print(resumen.to_string(index=False))
 
-#6. ahora que tenemos los coeficientes del modelo, lo replicamos y aplicaremos en la data inicial
+#6. ahora que tenemos los coeficientes del modelo, lo replicamos y aplicaremos en la data inicial que es la que teiene roda la información
+ #### primero agregaremos la coumna acumulada
+# Acumulado
+cols_num = ["maduracion", "pdponderado", "provisionporc"]
+data2[cols_num] = data2[cols_num].apply(pd.to_numeric, errors="coerce")
+data2 = data2.dropna(subset=["maduracion", "pdponderado", "provisionporc", "cosecha"])
+data2.head(5)
+
+data2 = data2[data2['maduracion'] > 0]
+if "provisionporcacum" not in data2.columns:
+    data2 = data2.sort_values(by=["cosecha", "maduracion"])
+    data2["provisionporcacum"] = data2.groupby("cosecha")["provisionporc"].transform(lambda x: x.round(6).cumsum())
+ 
+df = data2.copy()
+data2.head(5)
 # ===============================================================
 # ⚙️ 1. Asegurar tipos numéricos
 # ===============================================================

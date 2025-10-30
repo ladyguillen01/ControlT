@@ -1,42 +1,158 @@
-##Pero cuando lo calculo uno por uno, la corralción es alta ._.
-# Simulación de datos (reemplaza con tu DataFrame real)
-maduraciones = [202410, 202409, 202408, 202403, 202402, 202401]
-np.random.seed(0)
-datafiltrada = pd.DataFrame({
-    'cosecha': np.random.choice(maduraciones, 100),
-    'maduracion': np.random.randint(1, 32, 100),
-    'provisionporc': np.random.rand(100) / 10,
-    'pdponderado': np.random.rand(100) / 10
+######### CORREGIR
+#1. IMPORTAMOS LIBRERIAS 
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+import statsmodels.api as sm
+
+# 2. cARGAMOS LA DATA 
+data2
+
+#3. FILTRAMOS LOS AÑOS MODELOS A USAR 
+datafiltrada = data2[(data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202402, 202404, 202405, 202406, 202407, 202501,202502]))][['cosecha', 'maduracion', 'provisionporc', 'pdponderado']].astype(float)
+
+#4. CALCULAMOS EL ACUMULADO YA QUE ESA SERÁ NUESTRA VARIABLE DEPENDIENTE
+cols_num = ["maduracion", "pdponderado", "provisionporc"]
+datafiltrada[cols_num] = datafiltrada[cols_num].apply(pd.to_numeric, errors="coerce")
+datafiltrada = datafiltrada.dropna(subset=["maduracion", "pdponderado", "provisionporc", "cosecha"])
+datafiltrada.head(5)
+datafiltrada = datafiltrada[datafiltrada['maduracion'] > 0]
+if "provisionporcacum" not in datafiltrada.columns:
+    datafiltrada = datafiltrada.sort_values(by=["cosecha", "maduracion"])
+    datafiltrada["provisionporcacum"] = datafiltrada.groupby("cosecha")["provisionporc"].transform(lambda x: x.round(6).cumsum())
+ 
+df = datafiltrada.copy()
+datafiltrada.head(5)
+
+#5. ARMAMOS UN MODELO EN BASE A LA DATA QUE TENEMOS CONNUESTRAS VARIABLES INDEPOENDIENTES provisionporcacum y pdponderado
+data0= datafiltrada
+
+data0 = data0[data0['maduracion'] > 0]
+if "provisionporcacum" not in data0.columns:
+    data0 = data0.sort_values(by=["cosecha", "maduracion"])
+    data0["provisionporcacum"] = data0.groupby("cosecha")["provisionporc"].transform(lambda x: x.round(6).cumsum())
+ 
+df = data0.copy()
+ 
+# --- 2) Variables del modelo ---
+mad, pdv = df["maduracion"].values, df["pdponderado"].values
+mad2, pd2 = mad**2, pdv**2
+ 
+X = pd.DataFrame({
+    "mad2_pd2": pd2 * mad2,
+    "mad2_pd":  pdv * mad2,
+    "mad2":     mad2,
+    "mad_pd2":  pd2 * mad,
+    "mad_pd":   pdv * mad,
+    "mad":      mad,
+    "pd2":      pd2,
+    "pd":       pdv,
+    "const":    1.0
 })
+ 
+y = df["provisionporcacum"].values
+ 
+# --- 3) Ajuste OLS ---
+model = sm.OLS(y, X).fit()
+params = model.params
+y_pred = model.predict(X)
+ 
+# --- 4) Métricas ---
+r2 = r2_score(y, y_pred)
+corr = np.corrcoef(y, y_pred)[0, 1]
+error = y - y_pred
+mean_error = np.mean(error)
+std_error = np.std(error)
+min_obs, max_obs = np.min(y), np.max(y)
+min_pred, max_pred = np.min(y_pred), np.max(y_pred)
+ 
+# --- 5) Coeficientes ---
+a, b, c, d, e, f, g, h, i = params.values
+ 
+# --- 6) Mostrar resultados ---
+print("📈 FORMULA GLOBAL DEL MODELO:")
+print(f"y = ({a:.8f}*pd^2 + {b:.8f}*pd + {c:.8f})*maduracion^2 "
+      f"+ ({d:.8f}*pd^2 + {e:.8f}*pd + {f:.8f})*maduracion "
+      f"+ ({g:.8f}*pd^2 + {h:.8f}*pd + {i:.8f})\n")
+ 
+print("📊 RESUMEN ESTADÍSTICO DEL AJUSTE:")
+resumen = pd.DataFrame({
+    "Métrica": [
+        "R²",
+        "Correlación (Pearson)",
+        "Error medio",
+        "Desviación estándar del error",
+        "Mínimo observado",
+        "Máximo observado",
+        "Mínimo predicho",
+        "Máximo predicho"
+    ],
+    "Valor": [
+        round(r2, 6),
+        round(corr, 6),
+        round(mean_error, 6),
+        round(std_error, 6),
+        round(min_obs, 6),
+        round(max_obs, 6),
+        round(min_pred, 6),
+        round(max_pred, 6),
+        
+    ]
+})
+ 
+print(resumen.to_string(index=False))
 
-# Inicializar listas para acumulación global
-real_global = []
-pred_global = []
+#6. ahora que tenemos los coeficientes del modelo, lo replicamos y aplicaremos en la data inicial
+# ===============================================================
+# ⚙️ 1. Asegurar tipos numéricos
+# ===============================================================
+cols_num = ["maduracion", "pdponderado", "provisionporc"]
+data2[cols_num] = data2[cols_num].apply(pd.to_numeric, errors="coerce")
+data2 = data2.dropna(subset=cols_num)
+ 
+# ===============================================================
+# ⚙️ 2. Crear la provisión acumulada global
+#y = (0.52012404*pd^2 + -0.04051992*pd + 0.00069314)*maduracion^2 + (-9.44819799*pd^2 + 0.75828334*pd + -0.01124341)*maduracion + (15.44651872*pd^2 + -1.19992170*pd + 0.01562877)
+#filtrado con mad>0
+#y = (0.52012404*pd^2 + -0.04051992*pd + 0.00069314)*maduracion^2 + (-9.44819799*pd^2 + 0.75828334*pd + -0.01124341)*maduracion + (15.44651872*pd^2 + -1.19992170*pd + 0.01562877)
+# ===============================================================
+data2 = data2.sort_values(by="maduracion")
+data2["provisionporcacum"] = data2["provisionporc"].cumsum()
+  
+# Aplicar la fórmula del modelo
+mad = data2["maduracion"].astype(float)
+pdv = data2["pdponderado"].astype(float)
+ 
+data2["provisionporcacum_pred"] = (
+    (a*pdv**2 + b*pdv + c) * mad**2 +
+    (d*pdv**2 + e*pdv + f) * mad +
+    (g*pdv**2 + h*pdv + i)
+)
+ 
+# ===============================================================
+# ⚙️ 4. Métricas globales
+# ===============================================================
+r2 = r2_score(data2["provisionporcacum"], data2["provisionporcacum_pred"])
+corr = np.corrcoef(data2["provisionporcacum"], data2["provisionporcacum_pred"])[0, 1]
+error = data2["provisionporcacum_pred"] - data2["provisionporcacum"]
+ 
+print(f"R² global: {r2:.6f}")
+print(f"Correlación: {corr:.6f}")
+print(f"Error mínimo: {error.min():.6f}")
+print(f"Error máximo: {error.max():.6f}")
 
-for maduracion in maduraciones:
-    data = datafiltrada[datafiltrada['cosecha'] == maduracion][['maduracion', 'provisionporc']].sort_values(by='maduracion')
-    data['provisioncumsum'] = data['provisionporc'].cumsum()
+#7. vemos la correlación de este nuevo modelo aplicado a la data general
+print("universo:  ",data2['provisionporcacum_pred'].corr(data2['provisionporcacum']),r2_score(data2["provisionporcacum"], data2["provisionporcacum_pred"]))
 
-    if len(data) >= 3:
-        coef = np.polyfit(data['maduracion'].astype(float), data['provisioncumsum'].astype(float), 2)
-        polinomio = np.poly1d(coef)
-        prediccion = polinomio(data['maduracion'].astype(float))
+print(">202200:   ",data2[data2['cosecha'] > 202200]['provisionporcacum_pred'].corr(data2[data2['cosecha'] > 202400]['provisionporcacum']),r2_score(data2[data2['cosecha'] > 202200]["provisionporcacum"], data2[data2['cosecha'] > 202200]["provisionporcacum_pred"]))
 
-        # Agregar valores a listas globales
-        real_global.extend(data['provisioncumsum'].tolist())
-        pred_global.extend(prediccion.tolist())
+print(">202300:   ",data2[data2['cosecha'] > 202300]['provisionporcacum_pred'].corr(data2[data2['cosecha'] > 202300]['provisionporcacum']),r2_score(data2[data2['cosecha'] > 202300]["provisionporcacum"], data2[data2['cosecha'] > 202300]["provisionporcacum_pred"]))
 
-# Crear índice común
-indice = range(len(real_global))
+print(">202400:   ",data2[data2['cosecha'] > 202400]['provisionporcacum_pred'].corr(data2[data2['cosecha'] > 202400]['provisionporcacum']),r2_score(data2[data2['cosecha'] > 202400]["provisionporcacum"], data2[data2['cosecha'] > 202400]["provisionporcacum_pred"]))
 
-# Graficar comparación total
-plt.figure(figsize=(12, 6))
-plt.plot(indice, real_global, label='Provisión acumulada total real', marker='o')
-plt.plot(indice, pred_global, label='Provisión acumulada total predicha', linestyle='--', marker='x')
-plt.title("Comparación de provisión acumulada total vs predicha")
-plt.xlabel("Índice acumulado")
-plt.ylabel("Provisión acumulada")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+print(">202500:   ",data2[data2['cosecha'] > 202500]['provisionporcacum_pred'].corr(data2[data2['cosecha'] > 202500]['provisionporcacum']),r2_score(data2[data2['cosecha'] > 202500]["provisionporcacum"], data2[data2['cosecha'] > 202500]["provisionporcacum_pred"]))
+
+print(data2[data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202402, 202404, 202405, 202406, 202407, 202501,202502])]['provisionporcacum_pred'].corr(data2[data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202402, 202404, 202405, 202406, 202407, 202501,202502])]['provisionporcacum']),r2_score(data2[data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202402, 202404, 202405, 202406, 202407, 202501,202502])]['provisionporcacum'], data2[data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202402, 202404, 202405, 202406, 202407, 202501,202502])]['provisionporcacum_pred']))
+

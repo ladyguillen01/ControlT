@@ -18,7 +18,7 @@ cols_num = ["maduracion", "pdponderado", "provisionporc"]
 datafiltrada[cols_num] = datafiltrada[cols_num].apply(pd.to_numeric, errors="coerce")
 datafiltrada = datafiltrada.dropna(subset=["maduracion", "pdponderado", "provisionporc", "cosecha"])
 datafiltrada.head(5)
-datafiltrada = datafiltrada[datafiltrada['maduracion'] > 0]
+datafiltrada = datafiltrada[datafiltrada['maduracion'] >= 0]
 if "provisionporcacum" not in datafiltrada.columns:
     datafiltrada = datafiltrada.sort_values(by=["cosecha", "maduracion"])
     datafiltrada["provisionporcacum"] = datafiltrada.groupby("cosecha")["provisionporc"].transform(lambda x: x.round(6).cumsum())
@@ -29,7 +29,7 @@ datafiltrada.head(5)
 #5. ARMAMOS UN MODELO EN BASE A LA DATA QUE TENEMOS CONNUESTRAS VARIABLES INDEPOENDIENTES provisionporcacum y pdponderado
 data0= datafiltrada
 
-data0 = data0[data0['maduracion'] > 0]
+data0 = data0[data0['maduracion'] >= 0]
 if "provisionporcacum" not in data0.columns:
     data0 = data0.sort_values(by=["cosecha", "maduracion"])
     data0["provisionporcacum"] = data0.groupby("cosecha")["provisionporc"].transform(lambda x: x.round(6).cumsum())

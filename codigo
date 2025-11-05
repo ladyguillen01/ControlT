@@ -1,50 +1,115 @@
-#1. cargo mi data
-data2=spark.sql(f"""select*from catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada""").toPandas()
-#2. filtro las columnas y filas con las que voy a trabajar
-datafiltrada = data2[(data2['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202311, 202310, 202308, 202309, 202307, 202305, 202302, 202303, 202304]))][['cosecha', 'maduracion', 'provisionporc', 'pdponderado']]
-#3. calcule las fórmulas que siguen las maduraciones para cada codmes: y_i=a*(codmes)^2 +b*codmes + c ;i=cosecha   y obtener una relación cdmes provisionporcacum
-#donde la provisionporcacum es el Acumulado de xcada cosecha ordenado por maduración 
+######### MODELO LOGARÍTMICO PARAMETRIZADO ###############################################
 
-maduraciones = [202410, 202409, 202408, 202403, 202402, 202401, 202311, 202310, 202308, 202309, 202307, 202305, 202302, 202303, 202304]
-for maduracion in maduraciones:
-    data = datafiltrada[(datafiltrada['cosecha'].isin([maduracion]))][['cosecha', 'maduracion', 'provisionporc', 'pdponderado']].sort_values(by='maduracion')
-    data['provisioncumsum'] = data['provisionporc'].cumsum()
-    grado = 2
-    coef = np.polyfit(data['maduracion'].to_numpy().astype(float), data['provisioncumsum'].to_numpy().astype(float), grado)  # coeficientes del polinomio
-    polinomio = np.poly1d(coef)     # función polinómica
-    # Predicciones
-    prediccion = polinomio(data['maduracion'].to_numpy().astype(float))
-    # Calcular R²
-    from sklearn.metrics import r2_score
-    r2 = r2_score(data['provisioncumsum'].to_numpy().astype(float), prediccion)
-    print(f"Maduración: {maduracion}")
-    print(f"Coeficientes del polinomio: {coef}")
-    print(f"R²: {r2:.4f}")
-    print()
-#4. En base a las formulas polinómicas calculé otra formula polinómica para relacionar cada factor de mis primeros modelos para las cosechas con las pdponderado
+import pandas as pd
+import numpy as np
+from sklearn.metrics import r2_score
+from scipy.optimize import curve_fit
 
-#5- convertí los datos a decimal
-#import pandas as pd
-#from sklearn.metrics import r2_score
-data['maduracion']=data['maduracion'].astype(float)
-data['provisionporc']=data['provisionporc'].astype(float)
-data['pdponderado']=data['pdponderado'].astype(float)
-data['provisioncumsum']=data['provisioncumsum'].astype(float)
-data.dtypes
+# --- 1) Preparamos los datos ---
+data2[["maduracion", "pdponderado", "provisionporcacum"]] = data2[
+    ["maduracion", "pdponderado", "provisionporcacum"]
+].apply(pd.to_numeric, errors="coerce")
+data2 = data2.dropna(subset=["maduracion", "pdponderado", "provisionporcacum"])
+data2 = data2[data2["maduracion"] >= 0]
+df = data2.copy()
 
-#6. # Aplicar la fórmula
-data['proyectado'] = (
-    (0.06340894 * data['provisioncumsum']**2 - 0.00978566 * data['provisioncumsum'] + 0.00026513) * data['maduracion']**2 +
-    (0.854266795 * data['provisioncumsum']**2 + 0.0313562571 * data['provisioncumsum'] - 0.000346035382) * data['maduracion'] +
-    (2.56530353 * data['provisioncumsum']**2 - 0.31603608 * data['provisioncumsum'] + 0.01435779)
-)
+mad = df["maduracion"].values
+pdv = df["pdponderado"].values
+y = df["provisionporcacum"].values
 
-# Calcular R² y correlación
-r2 = r2_score(data['pdponderado'], data['proyectado'])
-correlacion = data['proyectado'].corr(data['pdponderado'])
+# --- 2) Definimos el modelo ---
+def modelo_log(pdv, mad, A1, A2, A3, B1, B2, B3, C1, C2, C3, D1, D2, D3):
+    a = A1*pdv**2 + A2*pdv + A3
+    b = B1*pdv**2 + B2*pdv + B3
+    c = C1*pdv**2 + C2*pdv + C3
+    d = D1*pdv**2 + D2*pdv + D3
+    
+    # log_base_a(x) = np.log(x) / np.log(a)
+    return (np.log(mad + b) / np.log(a)) * c + d
 
-print(data)
-print(f"\nR²: {r2}")
-print(f"Correlación: {correlacion}")
+# --- 3) Ajuste no lineal ---
+p0 = np.ones(12) * 0.1  # valores iniciales
+params, cov = curve_fit(lambda X1, X2, *p: modelo_log(X1, X2, *p),
+                        (pdv, mad), y, p0=p0, maxfev=100000)
 
-##pero la correlación me sale muy bajita u cuadndo corroboro con algunos emeses, la info de estas es errónea
+# --- 4) Predicciones y métricas ---
+y_pred = modelo_log(pdv, mad, *params)
+r2 = r2_score(y, y_pred)
+corr = np.corrcoef(y, y_pred)[0, 1]
+
+# --- 5) Resultados ---
+coef_names = ["A1","A2","A3","B1","B2","B3","C1","C2","C3","D1","D2","D3"]
+resumen_coef = pd.DataFrame({"Parámetro": coef_names, "Valor": params.round(8)})
+print("📈 COEFICIENTES DEL MODELO:")
+print(resumen_coef.to_string(index=False))
+
+print("\n📊 MÉTRICAS DEL AJUSTE:")
+print(f"R² = {r2:.6f}")
+print(f"Correlación (Pearson) = {corr:.6f}")
+
+# --- 6) Fórmula general ---
+print("\n📘 MODELO GENERAL:")
+print("y = log_a(maduracion + b) * c + d")
+print("Donde:")
+print("  a = (A1*pd^2 + A2*pd + A3)")
+print("  b = (B1*pd^2 + B2*pd + B3)")
+print("  c = (C1*pd^2 + C2*pd + C3)")
+print("  d = (D1*pd^2 + D2*pd + D3)")
+
+
+
+####2
+import pandas as pd
+import numpy as np
+from sklearn.metrics import r2_score
+from scipy.optimize import curve_fit
+
+# --- 1) Datos ---
+data2[["maduracion", "pdponderado", "provisionporcacum"]] = data2[
+    ["maduracion", "pdponderado", "provisionporcacum"]
+].apply(pd.to_numeric, errors="coerce")
+
+df = data2.dropna(subset=["maduracion", "pdponderado", "provisionporcacum"])
+mad = df["maduracion"].values
+pdv = df["pdponderado"].values
+y = df["provisionporcacum"].values
+
+# --- 2) Selecciona la forma funcional: 'linear', 'quadratic' o 'log'
+form = "linear"
+
+def f_dep(p, pdv, form):
+    """Dependencia funcional flexible."""
+    if form == "linear":
+        return p[0]*pdv + p[1]
+    elif form == "quadratic":
+        return p[0]*pdv**2 + p[1]*pdv + p[2]
+    elif form == "log":
+        return p[0]*np.log(pdv + 1) + p[1]
+    else:
+        raise ValueError("Forma no reconocida")
+
+# --- 3) Definir el modelo general ---
+def modelo(pdv, mad,
+           A1, A2, B1, B2, C1, C2, D1, D2):  # lineal (2 coef por parámetro)
+    
+    a = f_dep([A1, A2], pdv, form)
+    b = f_dep([B1, B2], pdv, form)
+    c = f_dep([C1, C2], pdv, form)
+    d = f_dep([D1, D2], pdv, form)
+    
+    return (np.log(mad + b) / np.log(a)) * c + d
+
+# --- 4) Ajuste ---
+p0 = np.ones(8) * 0.5
+params, _ = curve_fit(lambda x1, x2, *p: modelo(x1, x2, *p),
+                      (pdv, mad), y, p0=p0, maxfev=100000)
+
+# --- 5) Evaluación ---
+y_pred = modelo(pdv, mad, *params)
+r2 = r2_score(y, y_pred)
+corr = np.corrcoef(y, y_pred)[0, 1]
+
+print(f"📊 R² = {r2:.5f} | Corr = {corr:.5f}")
+print(f"Forma funcional usada: {form}")
+print("Coeficientes:", np.round(params, 6))
+

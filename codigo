@@ -5,55 +5,41 @@ R² = 0.933377
 Correlación (Pearson) = 0.966114
 
 #############  estimacion 40
-WITH max_maduraciones AS (
+WITH conteo AS (
   SELECT 
     cosecha,
-    MAX(maduracion) AS max_maduracion
-  FROM 
-    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
-  GROUP BY 
-    cosecha
+    MAX(maduracion) AS max_maduracion,
+    MAX(saldo_inicial) AS saldo_inicial,
+    MAX(pdponderado) AS pdponderado
+  FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
+  GROUP BY cosecha
 ),
+
+-- genera secuencia de números del 1 al 40
+maduraciones AS (
+  SELECT posexplode(sequence(1, 40)) AS (pos, maduracion)
+),
+
+-- genera combinaciones hasta maduración 40
 maduraciones_faltantes AS (
   SELECT 
-    t1.cosecha,
-    t1.maduracion + 1 AS maduracion
-  FROM 
-    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada t1
-  JOIN 
-    max_maduraciones t2
-  ON 
-    t1.cosecha = t2.cosecha
-  WHERE 
-    t1.maduracion = t2.max_maduracion
-    AND t1.maduracion < 44
-),
-maduraciones_faltantes_con_valores_fijos AS (
-  SELECT 
-    mf.cosecha,
-    mf.maduracion,
-    t.saldo_inicial,
-    t.pdponderado,
+    c.cosecha,
+    m.maduracion,
+    c.saldo_inicial,
+    c.pdponderado,
     NULL AS provisionporc,
     NULL AS rango_pd,
     NULL AS porcentajeacum,
     NULL AS codmes,
     NULL AS tipcredito
-  FROM 
-    maduraciones_faltantes mf
-  JOIN 
-    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada t
-  ON 
-    mf.cosecha = t.cosecha
-  WHERE 
-    t.maduracion = (SELECT MAX(maduracion) FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada WHERE cosecha = mf.cosecha)
+  FROM conteo c
+  JOIN maduraciones m
+    ON m.maduracion > c.max_maduracion
+   AND m.maduracion <= 40
 ),
+
+-- une los registros originales con los nuevos (sin duplicar)
 resultado_final AS (
-  SELECT 
-    *
-  FROM 
-    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
-  UNION ALL
   SELECT 
     cosecha,
     maduracion,
@@ -64,12 +50,23 @@ resultado_final AS (
     porcentajeacum,
     codmes,
     tipcredito
-  FROM 
-    maduraciones_faltantes_con_valores_fijos
+  FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
+
+  UNION ALL
+
+  SELECT 
+    cosecha,
+    maduracion,
+    saldo_inicial,
+    pdponderado,
+    provisionporc,
+    rango_pd,
+    porcentajeacum,
+    codmes,
+    tipcredito
+  FROM maduraciones_faltantes
 )
-SELECT 
-  *
-FROM 
-  resultado_final
-ORDER BY 
-  cosecha, maduracion;
+
+SELECT *
+FROM resultado_final
+ORDER BY cosecha, maduracion;

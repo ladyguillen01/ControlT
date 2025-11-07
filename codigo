@@ -5,49 +5,71 @@ R² = 0.933377
 Correlación (Pearson) = 0.966114
 
 #############  estimacion 40
--- 1️⃣ Contamos cuántas cosechas tiene cada maduración
-WITH conteo AS (
-    SELECT 
-        maduracion,
-        MAX(pd) AS pd,
-        MAX(saldoinicoa) AS saldoinicoa
-    FROM tabla_original
-    GROUP BY maduracion
+WITH max_maduraciones AS (
+  SELECT 
+    cosecha,
+    MAX(maduracion) AS max_maduracion
+  FROM 
+    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
+  GROUP BY 
+    cosecha
 ),
-
--- 2️⃣ Generamos la secuencia 0–40 (todas las posibles cosechas)
-maduraciones AS (
-    SELECT posexplode(sequence(0, 40)) AS (pos, cosecha)
+maduraciones_faltantes AS (
+  SELECT 
+    t1.cosecha,
+    t1.maduracion + 1 AS maduracion
+  FROM 
+    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada t1
+  JOIN 
+    max_maduraciones t2
+  ON 
+    t1.cosecha = t2.cosecha
+  WHERE 
+    t1.maduracion = t2.max_maduracion
+    AND t1.maduracion < 44
 ),
-
--- 3️⃣ Cruzamos todas las maduraciones con la secuencia 0–40
-completo AS (
-    SELECT 
-        c.maduracion,
-        m.cosecha,
-        c.pd,
-        c.saldoinicoa
-    FROM conteo c
-    CROSS JOIN maduraciones m
+maduraciones_faltantes_con_valores_fijos AS (
+  SELECT 
+    mf.cosecha,
+    mf.maduracion,
+    t.saldo_inicial,
+    t.pdponderado,
+    NULL AS provisionporc,
+    NULL AS rango_pd,
+    NULL AS porcentajeacum,
+    NULL AS codmes,
+    NULL AS tipcredito
+  FROM 
+    maduraciones_faltantes mf
+  JOIN 
+    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada t
+  ON 
+    mf.cosecha = t.cosecha
+  WHERE 
+    t.maduracion = (SELECT MAX(maduracion) FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada WHERE cosecha = mf.cosecha)
 ),
-
--- 4️⃣ Hacemos un LEFT JOIN con la tabla original para rellenar sólo los faltantes
-final AS (
-    SELECT 
-        comp.maduracion,
-        comp.cosecha,
-        comp.pd,
-        COALESCE(orig.provisionacum, NULL) AS provisionacum,
-        comp.saldoinicoa
-    FROM completo comp
-    LEFT JOIN tabla_original orig
-        ON comp.maduracion = orig.maduracion
-       AND comp.cosecha = orig.cosecha
+resultado_final AS (
+  SELECT 
+    *
+  FROM 
+    catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
+  UNION ALL
+  SELECT 
+    cosecha,
+    maduracion,
+    saldo_inicial,
+    pdponderado,
+    provisionporc,
+    rango_pd,
+    porcentajeacum,
+    codmes,
+    tipcredito
+  FROM 
+    maduraciones_faltantes_con_valores_fijos
 )
-
--- 5️⃣ Resultado ordenado
-SELECT *
-FROM final
-ORDER BY maduracion, cosecha;
-
-
+SELECT 
+  *
+FROM 
+  resultado_final
+ORDER BY 
+  cosecha, maduracion;

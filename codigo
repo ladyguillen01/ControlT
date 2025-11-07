@@ -5,35 +5,49 @@ R² = 0.933377
 Correlación (Pearson) = 0.966114
 
 #############  estimacion 40
+-- 1️⃣ Contamos cuántas cosechas tiene cada maduración
 WITH conteo AS (
     SELECT 
         maduracion,
-        COUNT(DISTINCT cosecha) AS n_cosechas,
         MAX(pd) AS pd,
         MAX(saldoinicoa) AS saldoinicoa
     FROM tabla_original
     GROUP BY maduracion
 ),
+
+-- 2️⃣ Generamos la secuencia 0–40 (todas las posibles cosechas)
 maduraciones AS (
-    SELECT GENERATE_SERIES(0, 40) AS cosecha  -- PostgreSQL / Spark SQL
+    SELECT posexplode(sequence(0, 40)) AS (pos, cosecha)
 ),
-faltantes AS (
+
+-- 3️⃣ Cruzamos todas las maduraciones con la secuencia 0–40
+completo AS (
     SELECT 
         c.maduracion,
         m.cosecha,
         c.pd,
-        NULL AS provisionacum,
         c.saldoinicoa
     FROM conteo c
-    JOIN maduraciones m ON m.cosecha >= c.n_cosechas
-    WHERE c.n_cosechas < 41
+    CROSS JOIN maduraciones m
 ),
+
+-- 4️⃣ Hacemos un LEFT JOIN con la tabla original para rellenar sólo los faltantes
 final AS (
-    SELECT * FROM tabla_original
-    UNION ALL
-    SELECT * FROM faltantes
+    SELECT 
+        comp.maduracion,
+        comp.cosecha,
+        comp.pd,
+        COALESCE(orig.provisionacum, NULL) AS provisionacum,
+        comp.saldoinicoa
+    FROM completo comp
+    LEFT JOIN tabla_original orig
+        ON comp.maduracion = orig.maduracion
+       AND comp.cosecha = orig.cosecha
 )
+
+-- 5️⃣ Resultado ordenado
 SELECT *
 FROM final
 ORDER BY maduracion, cosecha;
+
 

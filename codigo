@@ -3,3 +3,37 @@ Parámetros (vector): [-8.17275000e-03  9.99904670e-01  3.56901059e+02 -6.523525
  -6.84180000e-04  1.21600000e-05 -3.78252925e+00  7.71711200e-02]
 R² = 0.933377
 Correlación (Pearson) = 0.966114
+
+#############  estimacion 40
+WITH conteo AS (
+    SELECT 
+        maduracion,
+        COUNT(DISTINCT cosecha) AS n_cosechas,
+        MAX(pd) AS pd,
+        MAX(saldoinicoa) AS saldoinicoa
+    FROM tabla_original
+    GROUP BY maduracion
+),
+maduraciones AS (
+    SELECT GENERATE_SERIES(0, 40) AS cosecha  -- PostgreSQL / Spark SQL
+),
+faltantes AS (
+    SELECT 
+        c.maduracion,
+        m.cosecha,
+        c.pd,
+        NULL AS provisionacum,
+        c.saldoinicoa
+    FROM conteo c
+    JOIN maduraciones m ON m.cosecha >= c.n_cosechas
+    WHERE c.n_cosechas < 41
+),
+final AS (
+    SELECT * FROM tabla_original
+    UNION ALL
+    SELECT * FROM faltantes
+)
+SELECT *
+FROM final
+ORDER BY maduracion, cosecha;
+

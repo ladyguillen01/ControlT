@@ -1,72 +1,198 @@
-Número de parámetros optimizados: 8
-Parámetros (vector): [-8.17275000e-03  9.99904670e-01  3.56901059e+02 -6.52352583e+00
- -6.84180000e-04  1.21600000e-05 -3.78252925e+00  7.71711200e-02]
-R² = 0.933377
-Correlación (Pearson) = 0.966114
+##parte1: 
+data1=base[(base['maduracion'] >=2) #& (base['maduracion'] <=13)
+&(base['cosecha'] >202400)] 
+data1.head(4)
 
-#############  estimacion 40
-WITH conteo AS (
-  SELECT 
-    cosecha,
-    MAX(maduracion) AS max_maduracion,
-    MAX(saldo_inicial) AS saldo_inicial,
-    MAX(pdponderado) AS pdponderado
-  FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
-  GROUP BY cosecha
-),
+data1=base[(base['maduracion'] >=2) #& (base['maduracion'] <=13)
+&(base['cosecha'] >202400)] 
+data1.head(4)
 
--- genera secuencia de números del 1 al 40
-maduraciones AS (
-  SELECT posexplode(sequence(1, 40)) AS (pos, maduracion)
-),
+df = data1.copy()
+ 
+# --- 2) Variables del modelo ---
+mad, pdv = df["maduracion"].values, df["pdponderado"].values
+mad2, pd2 = mad**2, pdv**2
+ 
+X = pd.DataFrame({
+    "mad2_pd2": pd2 * mad2,
+    "mad2_pd":  pdv * mad2,
+    "mad2":     mad2,
+    "mad_pd2":  pd2 * mad,
+    "mad_pd":   pdv * mad,
+    "mad":      mad,
+    "pd2":      pd2,
+    "pd":       pdv,
+    "const":    1.0
+})
+ 
+y = df["provisionporcacum"].values
+ 
+# --- 3) Ajuste OLS ---
+model = sm.OLS(y, X).fit()
+params = model.params
+y_pred = model.predict(X)
+ 
+# --- 4) Métricas ---
+r2 = r2_score(y, y_pred)
+corr = np.corrcoef(y, y_pred)[0, 1]
+error = y - y_pred
+mean_error = np.mean(error)
+std_error = np.std(error)
+min_obs, max_obs = np.min(y), np.max(y)
+min_pred, max_pred = np.min(y_pred), np.max(y_pred)
+ 
+# --- 5) Coeficientes ---
+a, b, c, d, e, f, g, h, i = params.values
+ 
+# --- 6) Mostrar resultados ---
+print("📈 FORMULA GLOBAL DEL MODELO:")
+print(f"y = ({a:.8f}*pd^2 + {b:.8f}*pd + {c:.8f})*maduracion^2 "
+      f"+ ({d:.8f}*pd^2 + {e:.8f}*pd + {f:.8f})*maduracion "
+      f"+ ({g:.8f}*pd^2 + {h:.8f}*pd + {i:.8f})\n")
+ 
+print("📊 RESUMEN ESTADÍSTICO DEL AJUSTE:")
+resumen = pd.DataFrame({
+    "Métrica": [
+        "R²",
+        "Correlación (Pearson)",
+        "Error medio",
+        "Desviación estándar del error",
+        "Mínimo observado",
+        "Máximo observado",
+        "Mínimo predicho",
+        "Máximo predicho"
+    ],
+    "Valor": [
+        round(r2, 6),
+        round(corr, 6),
+        round(mean_error, 6),
+        round(std_error, 6),
+        round(min_obs, 6),
+        round(max_obs, 6),
+        round(min_pred, 6),
+        round(max_pred, 6),
+        
+    ]
+})
+ 
+print(resumen.to_string(index=False))
 
--- genera combinaciones hasta maduración 40
-maduraciones_faltantes AS (
-  SELECT 
-    c.cosecha,
-    m.maduracion,
-    c.saldo_inicial,
-    c.pdponderado,
-    NULL AS provisionporc,
-    NULL AS rango_pd,
-    NULL AS porcentajeacum,
-    NULL AS codmes,
-    NULL AS tipcredito
-  FROM conteo c
-  JOIN maduraciones m
-    ON m.maduracion > c.max_maduracion
-   AND m.maduracion <= 40
-),
+a,b, c, d, e, f, g, h, i 
 
--- une los registros originales con los nuevos (sin duplicar)
-resultado_final AS (
-  SELECT 
-    cosecha,
-    maduracion,
-    saldo_inicial,
-    pdponderado,
-    provisionporc,
-    rango_pd,
-    porcentajeacum,
-    codmes,
-    tipcredito
-  FROM catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada
 
-  UNION ALL
+import pandas as pd
+import numpy as np
+from sklearn.metrics import r2_score
+from scipy.optimize import curve_fit
 
-  SELECT 
-    cosecha,
-    maduracion,
-    saldo_inicial,
-    pdponderado,
-    provisionporc,
-    rango_pd,
-    porcentajeacum,
-    codmes,
-    tipcredito
-  FROM maduraciones_faltantes
-)
+#. segmenetamos la data
+#data2 = datafiltrada[datafiltrada['maduracion'] > 0]  2da parte de la curva
+data2=base[(base['maduracion'] >=16) & (base['cosecha'] >202306) #& (base['maduracion'] <=30)
+           ] 
+data2.head(4)
 
-SELECT *
-FROM resultado_final
-ORDER BY cosecha, maduracion;
+df = data2.dropna(subset=["maduracion", "pdponderado", "provisionporcacum"]).copy()
+ 
+# --- Funciones de dependencia (puedes ajustar por parámetro) ---
+def dep_linear(coefs, pdv):
+    # coefs = [p0, p1] -> p0 * pdv + p1
+    return coefs[0] * pdv + coefs[1]
+ 
+def dep_quadratic(coefs, pdv):
+    # coefs = [p0, p1, p2] -> p0*pd^2 + p1*pd + p2
+    return coefs[0] * pdv**2 + coefs[1] * pdv + coefs[2]
+ 
+def dep_log(coefs, pdv):
+    # coefs = [p0, p1] -> p0 * log(pd+1) + p1
+    return coefs[0] * np.log(pdv + 1) + coefs[1]
+ 
+# --- Especifica la forma para cada parámetro (elige 'linear','quadratic' o 'log') ---
+form_a = "linear"
+form_b = "linear"
+form_c = "linear"
+form_d = "linear"
+ 
+# --- Función que construye a,b,c,d dado el vector de parámetros a optimizar ---
+def build_params_from_vector(p, pdv, forms):
+    # forms = dict con las formas; p es el vector plano con todos los coeficientes concatenados
+    forms_order = ["a", "b", "c", "d"]
+    out = {}
+    idx = 0
+    for key in forms_order:
+        form = forms[key]
+        if form == "linear":
+            coefs = p[idx:idx+2]; idx += 2
+            out[key] = dep_linear(coefs, pdv)
+        elif form == "quadratic":
+            coefs = p[idx:idx+3]; idx += 3
+            out[key] = dep_quadratic(coefs, pdv)
+        elif form == "log":
+            coefs = p[idx:idx+2]; idx += 2
+            out[key] = dep_log(coefs, pdv)
+        else:
+            raise ValueError(f"Forma desconocida: {form}")
+    return out, idx
+ 
+# --- Función modelo base ---
+def modelo_base(pdv, mad, *p_flat):
+    # reconstruimos a,b,c,d
+    forms = {"a": form_a, "b": form_b, "c": form_c, "d": form_d}
+    p_flat = np.array(p_flat)
+    params_dict, used = build_params_from_vector(p_flat, pdv, forms)
+    a = params_dict["a"]
+    b = params_dict["b"]
+    c = params_dict["c"]
+    d = params_dict["d"]
+ 
+    # seguridad numérica:
+    # - a debe ser > 0 y preferible que no sea 1 (log base 1 indefinida)
+    # - mad + b debe ser > 0
+    eps = 1e-8
+    a_safe = np.where(a <= 0, eps, a)
+    # si algún a está cerca a 1, desplázalo ligeramente para evitar división por cero en log(a)
+    a_safe = np.where(np.isclose(a_safe, 1.0, atol=1e-6), a_safe + 1e-3, a_safe)
+    mad_plus_b = mad + b
+    mad_plus_b_safe = np.where(mad_plus_b <= 0, eps, mad_plus_b)
+ 
+    # cálculo del log en base a: log(mad+b)/log(a)
+    val = (np.log(mad_plus_b_safe) / np.log(a_safe)) * c + d
+    return val
+ 
+# --- Envolver para curve_fit: acepta X=(pdv, mad) y devuelve y ---
+def modelo_wrapped(X, *p_flat):
+    pdv_local, mad_local = X
+    return modelo_base(pdv_local, mad_local, *p_flat)
+ 
+# --- Determinar tamaño del vector de parámetros p0 según las formas elegidas ---
+def n_coefs_for_form(form):
+    return 2 if form in ("linear", "log") else 3
+ 
+n_params = sum([
+    n_coefs_for_form(form_a),
+    n_coefs_for_form(form_b),
+    n_coefs_for_form(form_c),
+    n_coefs_for_form(form_d),
+])
+ 
+# valores iniciales razonables
+p0 = np.ones(n_params) * 0.1
+ 
+# --- Opcional: bounds para los parámetros (muy amplios pero evitan extremos) ---
+lower = np.full(n_params, -1e3)
+upper = np.full(n_params, 1e3)
+# Por ejemplo podríamos forzar que ciertos coefs sean positivos si lo deseamos.
+ 
+# --- Ajuste con curve_fit (ahora sí correcto) ---
+Xdata = (pdv, mad)
+params_opt, cov = curve_fit(modelo_wrapped, Xdata, y, p0=p0, bounds=(lower, upper), maxfev=200000)
+ 
+# --- Predicción y métricas ---
+y_pred = modelo_wrapped(Xdata, *params_opt)
+r2 = r2_score(y, y_pred)
+corr = np.corrcoef(y, y_pred)[0, 1]
+ 
+print("Número de parámetros optimizados:", len(params_opt))
+print("Parámetros (vector):", np.round(params_opt, 8))
+print(f"R² = {r2:.6f}")
+print(f"Correlación (Pearson) = {corr:.6f}")
+

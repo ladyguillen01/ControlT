@@ -1,7 +1,21 @@
-##parte1: 
-data1=base[(base['maduracion'] >=2) #& (base['maduracion'] <=13)
-&(base['cosecha'] >202400)] 
-data1.head(4)
+#1. CARGAMOS LA BASE TABLA
+import pandas as pd
+import numpy as np
+base=spark.sql(f"""select cosecha,codmes,maduracion,saldo_inicial,provisionporc,pdponderado,rango_pd,porcentajeacum as provisionporcacum,acumulado30 from catalog_lhcl_prod_bcp.bcp_edv_rbm.T65734_caldesagregada""").toPandas()
+#Aconvertimos a número
+cols_num = ["maduracion", "pdponderado", "provisionporc","provisionporcacum"]
+base[cols_num] = base[cols_num].apply(pd.to_numeric, errors="coerce")
+base = base.dropna(subset=["maduracion", "pdponderado", "provisionporc", "cosecha"])
+#creamos una copia
+datafiltrada = base[(base['cosecha'].isin([202410, 202409, 202408, 202403, 202402, 202401, 202402, 202404, 202405, 202406, 202407, 202501,202502]))][['cosecha', 'maduracion', 'provisionporc', 'pdponderado','provisionporcacum']].astype(float)
+datafiltrada.head(5)
+## el comportamiento de la urva cambia para el mes 16 y el mes 30, a aprtir del 2 al 16, sigue una forma exponencial dependiente de la maduración y la pdponderada y de la 16 qa la 30 sigue una logaritmica
+
+#2. PARTE 1 - EXPONENCIAL
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+import statsmodels.api as sm
 
 data1=base[(base['maduracion'] >=2) #& (base['maduracion'] <=13)
 &(base['cosecha'] >202400)] 
@@ -77,15 +91,11 @@ resumen = pd.DataFrame({
  
 print(resumen.to_string(index=False))
 
-a,b, c, d, e, f, g, h, i 
-
-
+#3. PARTE 2: Desde la maduración 13 hasta la maduración 30 Crecimiento logaritmico
 import pandas as pd
 import numpy as np
 from sklearn.metrics import r2_score
 from scipy.optimize import curve_fit
-
-#. segmenetamos la data
 #data2 = datafiltrada[datafiltrada['maduracion'] > 0]  2da parte de la curva
 data2=base[(base['maduracion'] >=16) & (base['cosecha'] >202306) #& (base['maduracion'] <=30)
            ] 
@@ -195,4 +205,6 @@ print("Número de parámetros optimizados:", len(params_opt))
 print("Parámetros (vector):", np.round(params_opt, 8))
 print(f"R² = {r2:.6f}")
 print(f"Correlación (Pearson) = {corr:.6f}")
+
+np.round(params_opt, 8)
 
